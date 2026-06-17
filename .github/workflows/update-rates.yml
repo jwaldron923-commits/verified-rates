@@ -2,8 +2,15 @@ name: Update MND Mortgage Rates (30yr & 15yr)
 
 on:
   schedule:
-    # Runs daily at 6:00 PM ET (22:00 UTC) — after MND typically posts end-of-day rates
-    - cron: '0 22 * * *'
+    # MND posts end-of-day rates at 4:00 PM ET; we scrape at 4:15 PM ET (+15 min).
+    # GitHub cron is UTC and does NOT observe daylight saving, so both offsets are
+    # listed and the matching one fires each season:
+    #   4:15 PM EDT (spring–fall, UTC-4) = 20:15 UTC
+    #   4:15 PM EST (fall–spring, UTC-5) = 21:15 UTC
+    # The off-season entry runs an hour early in local time, but the scrape is
+    # idempotent (it overwrites rates.json), so each day still ends on fresh data.
+    - cron: '15 20 * * *'
+    - cron: '15 21 * * *'
   workflow_dispatch: # Allow manual trigger from the GitHub Actions UI
 
 # Don't let a manual run and the scheduled run stomp on each other.
