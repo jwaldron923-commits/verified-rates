@@ -1,17 +1,23 @@
-name: Update MND 30-Year Fixed Rate
+name: Update MND Mortgage Rates (30yr & 15yr)
 
 on:
   schedule:
-    # Runs daily at 6:00 PM ET (22:00 UTC) — after MND typically posts end-of-day rate
+    # Runs daily at 6:00 PM ET (22:00 UTC) — after MND typically posts end-of-day rates
     - cron: '0 22 * * *'
-  workflow_dispatch: # Allow manual trigger from GitHub Actions UI
+  workflow_dispatch: # Allow manual trigger from the GitHub Actions UI
+
+# Don't let a manual run and the scheduled run stomp on each other.
+concurrency:
+  group: update-rates
+  cancel-in-progress: false
 
 jobs:
   update-rate:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     permissions:
-      contents: write  # Required to commit back to the repo
+      contents: write # Required to commit rates.json back to the repo
 
     steps:
       - name: Checkout repo
@@ -25,13 +31,33 @@ jobs:
       - name: Install dependencies
         run: pip install requests beautifulsoup4
 
-      - name: Scrape MND rate and write rates.json
+      - name: Scrape MND rates and write rates.json
         run: python scrape_rate.py
+
+      - name: Sanity-check rates.json
+        # Defense in depth: the run fails loudly if the file is missing, unparseable,
+        # or the 15yr rate is not below the 30yr rate (the old "both equal" bug).
+        run: |
+          python - <<'PY'
+          import json, sys
+          d = json.load(open("rates.json"))
+          r30, r15 = d.get("mnd_30y_fixed"), d.get("mnd_15y_fixed")
+          if not isinstance(r30, (int, float)) or not isinstance(r15, (int, float)):
+              sys.exit(f"rates.json missing numeric rates: {d}")
+          if not (3.0 <= r15 < r30 <= 9.99):
+              sys.exit(f"Implausible rates 30yr={r30} 15yr={r15} (need 15yr < 30yr)")
+          print(f"OK: 30yr={r30} 15yr={r15}")
+          PY
 
       - name: Commit and push updated rates.json
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add rates.json
-          git diff --cached --quiet && echo "No rate change, skipping commit." || git commit -m "chore: update MND 30yr fixed rate $(date -u +'%Y-%m-%d')"
-          git push
+          if git diff --cached --quiet; then
+            echo "No change in rates.json, skipping commit."
+          else
+            RATES=$(python -c "import json;d=json.load(open('rates.json'));print(f\"30yr {d['mnd_30y_fixed']}% / 15yr {d['mnd_15y_fixed']}%\")")
+            git commit -m "chore: update MND rates ($RATES) $(date -u +'%Y-%m-%d')"
+            git push
+          fi
